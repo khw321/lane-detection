@@ -9,15 +9,13 @@ import time
 VGG_MEAN = [123.68, 116.779, 103.939]
 from utils.pil_aug import SSDAugmentation
 
-
-import sys
 import os
 from optparse import OptionParser
 
 import torch.backends.cudnn as cudnn
 import os.path as ops
 from utils import *
-from utils_no_git import data_processor
+from utils import data_processor
 from deeplab import deeplab_vgg16
 from dataset.nm_data import Dataset, detection_collate
 import torch.utils.data as data

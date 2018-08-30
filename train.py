@@ -10,7 +10,7 @@ from torch import optim
 from torch.autograd import Variable
 import os.path as ops
 from eval import my_eval_net
-from utils_no_git import data_processor
+from utils import data_processor
 import torch.nn.init as init
 from deeplab import deeplab_vgg16
 from utils.pil_aug import SSDAugmentation
