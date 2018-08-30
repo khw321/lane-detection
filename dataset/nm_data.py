@@ -73,15 +73,15 @@ class Dataset(data.Dataset):
     def pull_item(self, index):
         img_id = self._gt_img_list[index]
         lane_id = self._gt_lane_list[index]
-        fs_id = self._gt_fs_list[index]
+        # fs_id = self._gt_fs_list[index]
         img = cv2.imread(img_id)
         lane = cv2.imread(lane_id, cv2.IMREAD_GRAYSCALE)
-        fs = cv2.imread(fs_id, cv2.IMREAD_GRAYSCALE)
-        fs = fs/np.max(fs)
-        height, width, channels = img.shape
+        # fs = cv2.imread(fs_id, cv2.IMREAD_GRAYSCALE)
+        # fs = fs/np.max(fs)
+        # height, width, channels = img.shape
 
         if self.transform is not None:
-            img, lane, fs = self.transform(img, lane, fs)
+            img, lane, fs = self.transform(img, lane)
             # to rgb
             img = img[:, :, (2, 1, 0)]
             # img = img.transpose(2, 0, 1)
@@ -133,5 +133,6 @@ def detection_collate(batch):
     for sample in batch:
         imgs.append(torch.from_numpy(sample[0].transpose(2,0,1)))
         lane.append(torch.from_numpy(sample[1]))
-        fs.append(torch.from_numpy(sample[2]))
-    return torch.stack(imgs, 0), torch.stack(lane, 0).long(), torch.stack(fs, 0).long()
+        # fs.append(torch.from_numpy(sample[2]))
+    # return torch.stack(imgs, 0), torch.stack(lane, 0).long(), torch.stack(fs, 0).long()
+    return torch.stack(imgs, 0), torch.stack(lane, 0).long()

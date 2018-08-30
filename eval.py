@@ -26,7 +26,7 @@ def my_eval_net(net, dataset, gpu=False, *args):
     t1 = time.time()
     data = iter(dataset)
     for i in range(num_images):
-        img, lane, fs = next(data)
+        img, lane = next(data)
 
         # imgs = []
         # lanes = []
@@ -40,27 +40,23 @@ def my_eval_net(net, dataset, gpu=False, *args):
         if gpu:
             X = Variable(img).cuda()
             y1 = Variable(lane).cuda()
-            y2 = Variable(fs).cuda()
+            #y2 = Variable(fs).cuda()
         else:
             X = Variable(img)
             y1 = Variable(lane)
-            y2 = Variable(fs)
+            #y2 = Variable(fs)
 
         y_pred = net(X)
-        yp1 = y_pred[:, :2, :, :]
-        yp2 = y_pred[:, 2:, :, :]
+
 
         # draw mid_result
         if i % 10 == 0:
-            data_processor.draw_fs(X, y1, y2, F.softmax(yp1), F.softmax(yp2), i, 'mid_result/{}/val/{}/'.format(args[0], t1))
+            data_processor.draw_res(X, y1, F.softmax(y_pred), i, 'mid_result/{}/val/{}/'.format(args[0], t1))
 
 
-        prob1 = F.log_softmax(yp1)
-        prob2 = F.log_softmax(yp2)
+        prob1 = F.log_softmax(y_pred)
 
-        loss1 = nn.NLLLoss2d(Variable(torch.FloatTensor([0.4,1])).cuda())(prob1, y1)
-        loss2 = nn.NLLLoss2d()(prob2, y2)
-        loss = loss1 + loss2
+        loss = nn.NLLLoss2d(Variable(torch.FloatTensor([0.4,1])).cuda())(prob1, y1)
 
         tot += loss[0].data
 

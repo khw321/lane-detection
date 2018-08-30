@@ -5,6 +5,8 @@ import numpy as np
 import types
 from numpy import random
 
+img1 = cv2.imread('/data0/hwkuang/data/wandao_jpg/wandao1/frame_vc0_1259.jpg')
+img2 = cv2.imread('df.jpg')
 
 def intersect(box_a, box_b):
     max_xy = np.minimum(box_a[:, 2:], box_b[2:])
@@ -109,6 +111,8 @@ class Resize(object):
     def __call__(self, image, lane=None, fs=None):
         image = cv2.resize(image, (self.w, self.h))
         lane = cv2.resize(lane, (self.w, self.h))
+        if fs is None:
+            return image, lane, fs
         fs = cv2.resize(fs, (self.w, self.h))
         return image, lane, fs
 
@@ -128,6 +132,11 @@ class RandomCrop(object):
         newy1 = max(0, scaleH)
         newx2 = min(image_width, image_width + scaleW)
         newy2 = min(image_height, image_height + scaleH)
+
+        if fs is None:
+            return image[newy1:newy2, newx1:newx2], \
+                   lane[newy1:newy2, newx1:newx2], \
+                   fs
 
         return image[newy1:newy2, newx1:newx2], \
                lane[newy1:newy2, newx1:newx2], \
@@ -435,5 +444,5 @@ class SSDAugmentation(object):
             SubtractMeans(self.mean)
         ])
 
-    def __call__(self, img, boxes, labels):
+    def __call__(self, img, boxes, labels=None):
         return self.augment(img, boxes, labels)

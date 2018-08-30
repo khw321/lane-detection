@@ -1,7 +1,8 @@
 import sys
 import os
 from optparse import OptionParser
-#matplotlib.use('Agg')
+import matplotlib
+matplotlib.use('Agg')
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
@@ -16,6 +17,8 @@ from deeplab import deeplab_vgg16
 from utils.pil_aug import SSDAugmentation
 from dataset.nm_data import Dataset, detection_collate
 import torch.utils.data as data
+import math
+
 
 # VGG_MEAN = [124, 117, 104]
 VGG_MEAN = [92, 93, 93]
@@ -24,16 +27,19 @@ VGG_MEAN = [92, 93, 93]
 def train_net(net, epochs=5, batch_size=2, lr=0.1, val_percent=0.05,
               cp=True, gpu=False, model_name='deeplab', vis=False):
     if vis:
-        vis_title = 'lane and freespace segmentation ' + model_name
+        vis_title = 'lane segmentation ' + model_name
         vis_legend = ['Loc Loss']
         iter_plot = create_vis_plot('Iteration', 'Loss', vis_title, vis_legend)
 
     dir_checkpoint = 'experiment/deeplab/models/{}/'.format(model_name)
     if not os.path.exists(dir_checkpoint):
         os.makedirs(dir_checkpoint)
-    dataset_dir = '/home/workspace/hwkuang/data/Nullmax_data/'
-    train_dataset_file = ops.join(dataset_dir, 'train_undistortion.txt')
-    val_dataset_file = ops.join(dataset_dir, 'val_undistortion.txt')
+    # dataset_dir = '/home/workspace/hwkuang/data/Nullmax_data/'
+    # train_dataset_file = ops.join(dataset_dir, 'train_undistortion.txt')
+    # val_dataset_file = ops.join(dataset_dir, 'val_undistortion.txt')
+    dataset_dir = '/data0/hwkuang/data/Nullmax_data/Image_raw/'
+    train_dataset_file = ops.join(dataset_dir, 'train.txt')
+    val_dataset_file = ops.join(dataset_dir, 'val.txt')
 
     assert ops.exists(train_dataset_file)
 
@@ -56,72 +62,61 @@ def train_net(net, epochs=5, batch_size=2, lr=0.1, val_percent=0.05,
         weight = Variable(torch.FloatTensor([0.4, 1]))
 
     criterion = nn.NLLLoss2d(weight)
-    cfg_lr = [20000, 30000, 35000]
-    step_index = 0
-    val_max = [1, 10]
-    epoch_loss = 0
-    epoch_size = len(train_dataset) // batch_size
-    for epoch in range(1, epochs):
+    epoch_size = len(train_dataloader)
+    for epoch in range(epochs):
+        print('\nEpoch: {}'.format(epoch))
+        net.train()
+        start_batch_idx = len(train_dataloader) * epoch
+        epoch_loss = 0
 
         # if epoch in cfg_lr:
         #     step_index += 1
         #     adjust_learning_rate(optimizer, 0.01, step_index)
 
-        adjust_learning_rate_every_epoch(optimizer, lr*(1-epoch/epochs))
-        try:
-            img, lane, fs = next(batch_iterator)
-        except StopIteration:
-            print('Starting epoch {}/{}.'.format(epoch // epoch_size, epochs // epoch_size))
-            batch_iterator = iter(train_dataloader)
-            img, lane, fs = next(batch_iterator)
+        # 1. reduce lr for every iteration
+        # adjust_learning_rate_every_epoch(optimizer, lr*(1-epoch/epochs))
 
-        if gpu:
-            X = Variable(img).cuda()
-            y1 = Variable(lane).cuda()
-            y2 = Variable(fs).cuda()
-        else:
-            X = Variable(img)
-            y1 = Variable(lane)
-            y2 = Variable(fs)
+        # use to find best init learning rate
+        # adjust_learning_rate_every_epoch(optimizer, lr*10**(epoch/10))
 
-        y_pred = net(X)
-        yp1 = y_pred[:, :2, :, :]
-        yp2 = y_pred[:, 2:, :, :]
-        prob1 = F.log_softmax(yp1)
-        prob2 = F.log_softmax(yp2)
+        for batch_idx, (inputs, targets) in enumerate(train_dataloader):
+            global_step = batch_idx + start_batch_idx
+            batch_lr = lr * sgdr(len(train_dataloader), global_step)
+            adjust_learning_rate_every_epoch(optimizer, batch_lr)
+            optimizer.zero_grad()
 
-        loss1 = criterion(prob1, y1)
-        loss2 = nn.NLLLoss2d()(prob2, y2)
-        loss = loss1 + loss2
-        epoch_loss += loss.data[0]
+            if gpu:
+                X = Variable(inputs).cuda()
+                y1 = Variable(targets).cuda()
+            else:
+                X = Variable(inputs)
+                y1 = Variable(targets)
 
-        optimizer.zero_grad()
-        loss.backward()
+            y_pred = net(X)
+            prob1 = F.log_softmax(y_pred)
+            loss = criterion(prob1, y1)
+            loss.backward()
+            optimizer.step()
 
-        if epoch % 10 == 0:
+            epoch_loss += loss.data[0]
 
-            print('{} --- loss: {}, loss1: {} , loss2: {}'.format(epoch, loss.data[0], loss1.data[0], loss2.data[0]))
-        if vis:
-            update_vis_plot(epoch, loss.data[0],
-                            iter_plot, 'append')
+            if global_step % 100 == 0:
+                data_processor.draw_res(X, y1, F.softmax(prob1), global_step, 'mid_result/{}/train/'.format(model_name))
 
-        if epoch % 100 == 0:
-            data_processor.draw_fs(X, y1, y2, F.softmax(prob1), F.softmax(prob2), epoch, 'mid_result/{}/train/'.format(model_name))
+            if global_step % 10 == 0:
+                print('{}-{} --- loss: {}  --- learning rate: {:6f}'.format(epoch, batch_idx, loss.data[0], batch_lr))
 
-        optimizer.step()
-        if epoch % 1 == 0:
-            print('Starting epoch {}.'.format(epoch//2000))
-            print('Epoch finished ! Loss: {}'.format(epoch_loss / 2000))
+            if vis:
+                update_vis_plot(global_step, loss.data[0], iter_plot, 'append')
 
-            epoch_loss = 0
-            if epoch % 1 == 0:
+            if batch_idx and batch_idx % (epoch_size // 2 - 1) == 0:
+                print('Half Epoch {} -- loss: {}'.format(epoch, epoch_loss))
+                epoch_loss = 0
                 val_loss = my_eval_net(net, val_dataloader, gpu, model_name)
                 print('val Loss:{}'.format(val_loss))
-            # if cp:
                 torch.save(net.state_dict(),
-                           dir_checkpoint + 'CP{}.pth'.format(epoch + 1))
-
-                print('Checkpoint {} saved !'.format(epoch + 1))
+                           dir_checkpoint + 'CP{}_{}.pth'.format(epoch, batch_idx))
+                print('Checkpoint {} saved !'.format(global_step + 1))
 
 def create_vis_plot(_xlabel, _ylabel, _title, _legend):
     return viz.line(
@@ -154,7 +149,6 @@ def weights_init(m):
         xavier(m.weight.data)
         m.bias.data.zero_()
 
-
 def adjust_learning_rate(optimizer, gamma, step):
     """Sets the learning rate to the initial LR decayed by 10 at every
         specified step
@@ -175,34 +169,51 @@ def adjust_learning_rate_every_epoch(optimizer, lr):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
+def set_optimizer_lr(optimizer, lr):
+    # callback to set the learning rate in an optimizer, without rebuilding the whole optimizer
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+    return optimizer
 
+def sgdr(period, batch_idx):
+    # returns normalised anytime sgdr schedule given period and batch_idx
+    # best performing settings reported in paper are T_0 = 10, T_mult=2
+    # so always use T_mult=2
+    batch_idx = float(batch_idx)
+    restart_period = period
+    while batch_idx/restart_period > 1.:
+        batch_idx = batch_idx - restart_period
+        restart_period = restart_period * 2.
+
+    radians = math.pi*(batch_idx/restart_period)
+    return 0.5*(1.0 + math.cos(radians))
 
 if __name__ == '__main__':
     parser = OptionParser()
-    parser.add_option('-e', '--epochs', dest='epochs', default=80000, type='int',
+    parser.add_option('-e', '--epochs', dest='epochs', default=7, type='int',
                       help='number of epochs')
-    parser.add_option('-b', '--batch-size', dest='batchsize', default=2,
+    parser.add_option('-b', '--batch-size', dest='batchsize', default=4,
                       type='int', help='batch size')
-    parser.add_option('-l', '--learning-rate', dest='lr', default=0.01,
+    parser.add_option('-l', '--learning-rate', dest='lr', default=0.02,
                       type='float', help='learning rate')
     parser.add_option('-g', '--gpu', action='store_true', dest='gpu',
                       default=True, help='use cuda')
     parser.add_option('-c', '--load', dest='load',
                       default=False, help='load file model')
     parser.add_option('-v', '--load_vgg', dest='load_vgg',
-                      default=True, help='load vgg model')
+                      default=False, help='load vgg model')
     parser.add_option('-n', '--model_name', dest='model_name',
                       default='deeplab', type=str, help='the prefix name of save files')
     parser.add_option('-i', '--gpu_id', dest='gpu_id',
-                      default='0', help='gpu_id')
-    parser.add_option('--visdom', default=False, type=str,
+                      default='7', help='gpu_id')
+    parser.add_option('--visdom', default=True, type=str,
                         help='Use visdom for loss visualization')
     (options, args) = parser.parse_args()
     # resnet18 = deeplab_vgg16.vgg16_bn(pretrained=True)
 
     os.environ['CUDA_VISIBLE_DEVICES'] = options.gpu_id
     print(options)
-    net = deeplab_vgg16.vgg16_freespace_gn()
+    net = deeplab_vgg16.vgg16_gn()
     print(net)
     # tin = torch.randn([2,3,480,640])
     # tout = net(Variable(tin))
@@ -225,8 +236,12 @@ if __name__ == '__main__':
 
     # load model
     if options.load:
-        net.load_state_dict(torch.load(options.load))
-        print('Model loaded from {}'.format(options.load))
+        pretrained_dict = torch.load(options.load)
+        model_dict = net.state_dict()
+        pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
+        model_dict.update(pretrained_dict)
+        # net.load_state_dict(torch.load(options.load))
+        # print('Model loaded from {}'.format(options.load))
 
     if options.gpu:
         net.cuda()
