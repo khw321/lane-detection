@@ -1,5 +1,5 @@
 import matplotlib
-matplotlib.use('Agg')
+# matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
@@ -19,6 +19,10 @@ from utils import data_processor
 from deeplab import deeplab_vgg16
 from dataset.nm_data import Dataset, detection_collate
 import torch.utils.data as data
+from Instance_loss import Instance_loss
+
+discriminative_loss = Instance_loss()
+
 
 def my_eval_net(net, dataset, gpu=False, *args):
     tot = 0
@@ -28,35 +32,27 @@ def my_eval_net(net, dataset, gpu=False, *args):
     for i in range(num_images):
         img, lane = next(data)
 
-        # imgs = []
-        # lanes = []
-        # fss = []
-        # for i in range(1):
-        #     imgs.append(torch.from_numpy(img.transpose(2,0,1)))
-        #     lanes.append(torch.from_numpy(lane))
-        #     fss.append(torch.from_numpy(fs))
-        # X, y_lane, y_fs = torch.stack(imgs, 0), torch.stack(lanes, 0).long(), torch.stack(fss, 0).long()
+        Ins_img = lane.numpy()
+        Bi_img = 1 * (Ins_img > 0)
+        y2 = torch.from_numpy(Bi_img)
+        # y1 = torch.unsqueeze(lane, 1)
 
-        if gpu:
-            X = Variable(img).cuda()
-            y1 = Variable(lane).cuda()
-            #y2 = Variable(fs).cuda()
-        else:
-            X = Variable(img)
-            y1 = Variable(lane)
-            #y2 = Variable(fs)
+        X = Variable(img).cuda()
+        y1 = Variable(lane).cuda()
+        y2 = Variable(y2).cuda()
 
         y_pred = net(X)
+        yp1 = y_pred[:, :2, :, :]
+        yp2 = y_pred[:, 2:, :, :]
+        prob1 = F.log_softmax(yp1)
+        prob2 = F.log_softmax(yp2)
+        loss1 = discriminative_loss(prob1, y1)
+        loss2 = nn.NLLLoss2d(Variable(torch.FloatTensor([0.4, 1])).cuda())(prob2, y2)
+        loss = loss1 + loss2
 
-
-        # draw mid_result
-        if i % 10 == 0:
-            data_processor.draw_res(X, y1, F.softmax(y_pred), i, 'mid_result/{}/val/{}/'.format(args[0], t1))
-
-
-        prob1 = F.log_softmax(y_pred)
-
-        loss = nn.NLLLoss2d(Variable(torch.FloatTensor([0.4,1])).cuda())(prob1, y1)
+        if i % 100 == 0:
+            data_processor.draw_fs(X, y1, y2, F.softmax(prob1), F.softmax(prob2), i,
+                                   'mid_result/{}/val/{}/'.format(args[0], t1))
 
         tot += loss[0].data
 

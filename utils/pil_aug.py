@@ -436,7 +436,8 @@ class SSDAugmentation(object):
         self.w = w
         self.augment = Compose([
             ConvertFromInts(),
-            PhotometricDistort(),  # random Contrast, Color, Saturation, Hue
+            # PhotometricDistort(),  # random Contrast, Color, Saturation, Hue
+            # no use
             #RandomSampleCrop(),
             #ToPercentCoords(),
             RandomCrop(),
