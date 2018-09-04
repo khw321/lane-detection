@@ -69,15 +69,15 @@ def train_net(net, epochs=5, batch_size=2, lr=0.1, val_percent=0.05,
         net.train()
         start_batch_idx = len(train_dataloader) * epoch
         epoch_loss = 0
-        if epoch in lr_step:
-            lr_step_index += 1
-            adjust_learning_rate(optimizer, 0.1, lr_step_index)
+        # if epoch in lr_step:
+        #     lr_step_index += 1
+        #     adjust_learning_rate(optimizer, 0.1, lr_step_index)
 
         for batch_idx, (inputs, targets) in enumerate(train_dataloader):
             global_step = batch_idx + start_batch_idx
             # batch_lr = lr * sgdr(len(train_dataloader), global_step)
             # adjust_learning_rate_every_epoch(optimizer, batch_lr)
-            # adjust_learning_rate_every_epoch(optimizer, lr * (1 - global_step / epochs))
+            adjust_learning_rate_every_epoch(optimizer, lr * (1 - epoch / epochs))
 
             optimizer.zero_grad()
             Ins_img = targets.numpy()
@@ -100,7 +100,7 @@ def train_net(net, epochs=5, batch_size=2, lr=0.1, val_percent=0.05,
             prob2 = F.log_softmax(yp2)
             loss1 = discriminative_loss(prob1, y1)
             loss2 = criterion(prob2, y2)
-            loss = 0 * loss1 + loss2
+            loss = 0.2 * loss1 + loss2
             loss.backward()
             optimizer.step()
 
@@ -205,7 +205,7 @@ def sgdr(period, batch_idx):
 
 if __name__ == '__main__':
     parser = OptionParser()
-    parser.add_option('-e', '--epochs', dest='epochs', default=30, type='int',
+    parser.add_option('-e', '--epochs', dest='epochs', default=300, type='int',
                       help='number of epochs')
     parser.add_option('-b', '--batch-size', dest='batchsize', default=4,
                       type='int', help='batch size')
@@ -221,7 +221,7 @@ if __name__ == '__main__':
                       default='deeplab', type=str, help='the prefix name of save files')
     parser.add_option('-i', '--gpu_id', dest='gpu_id',
                       default='6', help='gpu_id')
-    parser.add_option('--visdom', default=True, type=str,
+    parser.add_option('--visdom', default=False, type=str,
                         help='Use visdom for loss visualization')
     (options, args) = parser.parse_args()
     # resnet18 = deeplab_vgg16.vgg16_bn(pretrained=True)
@@ -255,8 +255,10 @@ if __name__ == '__main__':
         model_dict = net.state_dict()
         pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
         model_dict.update(pretrained_dict)
+        net.load_state_dict(model_dict)
+        print('Model loaded from {}'.format(options.load))
+
         # net.load_state_dict(torch.load(options.load))
-        # print('Model loaded from {}'.format(options.load))
 
     if options.gpu:
         net.cuda()
