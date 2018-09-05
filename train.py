@@ -64,6 +64,7 @@ def train_net(net, epochs=5, batch_size=2, lr=0.1, val_percent=0.05,
     criterion = nn.NLLLoss2d(weight)
     discriminative_loss = Instance_loss()
     epoch_size = len(train_dataloader)
+    global_step = 0
     for epoch in range(epochs):
         print('\nEpoch: {}'.format(epoch))
         net.train()
@@ -114,7 +115,7 @@ def train_net(net, epochs=5, batch_size=2, lr=0.1, val_percent=0.05,
                     epoch, batch_idx, loss.data[0], loss1.data[0], loss2.data[0], batch_lr))
 
             if vis:
-                res = [2, loss.data[0]][loss.data[0]<2]
+                res = [1, loss.data[0]][loss.data[0]<1]
                 update_vis_plot(global_step, res, iter_plot, 'append')
 
             # if batch_idx and batch_idx % (epoch_size // 2 - 1) == 0:
@@ -130,9 +131,9 @@ def train_net(net, epochs=5, batch_size=2, lr=0.1, val_percent=0.05,
         #     epoch_loss = 0
         #     val_loss = my_eval_net(net, val_dataloader, gpu, model_name)
         #     print('val Loss:{}'.format(val_loss))
-        #     torch.save(net.state_dict(),
-        #                dir_checkpoint + 'CP{}_{}.pth'.format(epoch, batch_idx))
-        #     print('Checkpoint {} saved !'.format(global_step + 1))
+        torch.save(net.state_dict(),
+                   dir_checkpoint + 'CP{}_{}.pth'.format(epoch, global_step))
+        print('Checkpoint {} saved !'.format(epoch))
 def create_vis_plot(_xlabel, _ylabel, _title, _legend):
     return viz.line(
         X=torch.zeros((1,)).cpu(),
