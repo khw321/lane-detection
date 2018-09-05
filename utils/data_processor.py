@@ -192,14 +192,16 @@ def draw_res(X, y, pre, epoch, path = 'mid_result/'):
         fig = plt.figure()
         ax1 = fig.add_subplot(131)
         img = X[i].transpose(1, 2, 0).astype(int) + VGG_MEAN
-        plt.imshow(img)
+        ax1.imshow(img)
         label = y[i]
         ax2 = fig.add_subplot(132)
-        plt.imshow(label)
+        ax2.imshow(label)
         ax3 = fig.add_subplot(133)
         pred = pre[i][1]
-        plt.imshow(pred)
+        ax3.imshow(pred)
         plt.savefig(path+'{}_{}.jpg'.format(epoch, i))
+        plt.close()
+
     print('save_midresult:{}'.format(epoch))
         #cv2.imwrite('mid_result/{}_{}.jpg'.format(epoch, i), img)
 
@@ -215,19 +217,21 @@ def draw_fs(X, y1, y2, pre1, pre2, epoch, path = 'mid_result/'):
         fig = plt.figure()
         ax1 = fig.add_subplot(231)
         img = X[i].transpose(1, 2, 0).astype(int) + VGG_MEAN
-        plt.imshow(img)
+        ax1.imshow(img)
         label = y1[i]
         ax2 = fig.add_subplot(232)
-        plt.imshow(label)
+        ax2.imshow(label)
         ax3 = fig.add_subplot(233)
         pred1 = pre1[i][1]
-        plt.imshow(pred1)
+        ax3.imshow(pred1)
         ax4 = fig.add_subplot(234)
-        plt.imshow(y2[i])
+        ax4.imshow(y2[i])
         ax5 = fig.add_subplot(235)
         pred2 = pre2[i][1]
-        plt.imshow(pred2)
+        ax5.imshow(pred2)
         plt.savefig(path+'{}_{}.jpg'.format(epoch, i))
+        plt.close()
+
     print('save_midresult:{}'.format(epoch))
         #cv2.imwrite('mid_result/{}_{}.jpg'.format(epoch, i), img)
 

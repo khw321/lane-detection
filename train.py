@@ -37,8 +37,8 @@ def train_net(net, epochs=5, batch_size=2, lr=0.1, val_percent=0.05,
     # train_dataset_file = ops.join(dataset_dir, 'train_undistortion.txt')
     # val_dataset_file = ops.join(dataset_dir, 'val_undistortion.txt')
     dataset_dir = '/data0/hwkuang/data/Nullmax_data/'
-    train_dataset_file = ops.join(dataset_dir, 'small_list/train_instance.txt')
-    val_dataset_file = ops.join(dataset_dir, 'small_list/val_instance.txt')
+    train_dataset_file = ops.join(dataset_dir, 'train_instance.txt')
+    val_dataset_file = ops.join(dataset_dir, 'val_instance.txt')
 
     assert ops.exists(train_dataset_file)
 
@@ -73,11 +73,11 @@ def train_net(net, epochs=5, batch_size=2, lr=0.1, val_percent=0.05,
         #     lr_step_index += 1
         #     adjust_learning_rate(optimizer, 0.1, lr_step_index)
 
-        for batch_idx, (inputs, targets) in enumerate(train_dataloader):
+        for batch_idx,  (inputs, targets) in enumerate(train_dataloader):
             global_step = batch_idx + start_batch_idx
-            # batch_lr = lr * sgdr(len(train_dataloader), global_step)
-            # adjust_learning_rate_every_epoch(optimizer, batch_lr)
-            adjust_learning_rate_every_epoch(optimizer, lr * (1 - epoch / epochs))
+            batch_lr = lr * sgdr(len(train_dataloader) * 20, global_step)
+            adjust_learning_rate_every_epoch(optimizer, batch_lr)
+            # adjust_learning_rate_every_epoch(optimizer, lr * (global_step / (len(train_dataloader) * epochs)))
 
             optimizer.zero_grad()
             Ins_img = targets.numpy()
@@ -111,7 +111,7 @@ def train_net(net, epochs=5, batch_size=2, lr=0.1, val_percent=0.05,
 
             if global_step % 10 == 0:
                 print('{}-{} --- loss: {} , loss_dist: {} , loss_bi: {} --- learning rate: {:6f}'.format(
-                    epoch, batch_idx, loss.data[0], loss1.data[0], loss2.data[0], lr))
+                    epoch, batch_idx, loss.data[0], loss1.data[0], loss2.data[0], batch_lr))
 
             if vis:
                 res = [2, loss.data[0]][loss.data[0]<2]
@@ -205,7 +205,7 @@ def sgdr(period, batch_idx):
 
 if __name__ == '__main__':
     parser = OptionParser()
-    parser.add_option('-e', '--epochs', dest='epochs', default=300, type='int',
+    parser.add_option('-e', '--epochs', dest='epochs', default=20, type='int',
                       help='number of epochs')
     parser.add_option('-b', '--batch-size', dest='batchsize', default=4,
                       type='int', help='batch size')
@@ -216,11 +216,11 @@ if __name__ == '__main__':
     parser.add_option('-c', '--load', dest='load',
                       default=False, help='load file model')
     parser.add_option('-v', '--load_vgg', dest='load_vgg',
-                      default=True, help='load vgg model')
+                      default=False, help='load vgg model')
     parser.add_option('-n', '--model_name', dest='model_name',
                       default='deeplab', type=str, help='the prefix name of save files')
     parser.add_option('-i', '--gpu_id', dest='gpu_id',
-                      default='6', help='gpu_id')
+                      default='5', help='gpu_id')
     parser.add_option('--visdom', default=False, type=str,
                         help='Use visdom for loss visualization')
     (options, args) = parser.parse_args()
