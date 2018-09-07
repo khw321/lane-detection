@@ -1,161 +1,175 @@
-import os
-import argparse
-import time
-import numpy
+import matplotlib
+# matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
-import cv2
-from unet import UNet
-from utils import *
-from matplotlib import pyplot as plt
 import torch.nn as nn
-def yuanshi_predict_img(net, full_img, gpu=False):
-    img = resize_and_crop(full_img)
+import torch.backends.cudnn as cudnn
+import cv2
+import time
+VGG_MEAN = [123.68, 116.779, 103.939]
 
-    left = get_square(img, 0)
-    right = get_square(img, 1)
+import os
+from optparse import OptionParser
 
-    right = normalize(right)
-    left = normalize(left)
+import os.path as ops
+from utils import *
+from utils import data_processor, lane_postprocess, lane_cluster
+from utils.pil_aug import SSDAugmentation
+from deeplab import deeplab_vgg16
+from dataset.nm_data import Dataset, detection_collate
+import torch.utils.data as data
+from Instance_loss import Instance_loss
 
-    right = np.transpose(right, axes=[2, 0, 1])
-    left = np.transpose(left, axes=[2, 0, 1])
-
-    X_l = torch.FloatTensor(left).unsqueeze(0)
-    X_r = torch.FloatTensor(right).unsqueeze(0)
-
-    if gpu:
-        X_l = Variable(X_l, volatile=True).cuda()
-        X_r = Variable(X_r, volatile=True).cuda()
-    else:
-        X_l = Variable(X_l, volatile=True)
-        X_r = Variable(X_r, volatile=True)
-
-    y_l = F.sigmoid(net(X_l))
-    time_start = time.time()
-
-    y_r = F.sigmoid(net(X_r))
-    time_stop = time.time()
-    print('time----{}'.format(time_stop - time_start))
-
-    y_l = F.upsample_bilinear(y_l, scale_factor=2).data[0][0].cpu().numpy()
-    y_r = F.upsample_bilinear(y_r, scale_factor=2).data[0][0].cpu().numpy()
-
-    y = merge_masks(y_l, y_r, full_img.size[0])
-    return y
-    # yy = dense_crf(np.array(full_img).astype(np.uint8), y)
-
-   # return yy > 0.5
-    return yy
-def predict_img(net, full_img, gpu=False):
-    img = resize_and_crop(full_img)
-    img = np.array(img)
-
-    img = normalize(img)
-
-    img = np.transpose(img, axes=[2, 0, 1])
-
-    X_r = torch.FloatTensor(img).unsqueeze(0)
-
-    if gpu:
-        X_r = Variable(X_r, volatile=True).cuda()
-    else:
-        X_r = Variable(X_r, volatile=True)
+discriminative_loss = Instance_loss()
+postprocessor = lane_postprocess.LaneNetPoseProcessor()
+cluster = lane_cluster.LaneNetCluster()
 
 
-    time_start = time.time()
+def my_eval_net(net, dataset, gpu=False, *args):
+    tot = 0
+    num_images = len(dataset)
+    t1 = time.time()
+    data = iter(dataset)
+    for i in range(num_images):
+        img, lane = next(data)
 
-    y_r = F.sigmoid(net(X_r))
-    time_stop = time.time()
-    print('time----{}'.format(time_stop - time_start))
+        X = Variable(img).cuda()
+        t_s = time.time()
+        y_pred = net(X)
+        t_e = time.time()
+        print('infer time: {}'.format(t_e-t_s))
+        yp1 = y_pred[:, :2, :, :]
+        yp2 = y_pred[:, 2:, :, :]
+        prob1 = F.log_softmax(yp1)
+        prob2 = F.log_softmax(yp2)
 
-    #y_r = F.upsample_bilinear(y_r, scale_factor=2).data[0][0].cpu().numpy()
-    y_r = y_r[0].data.cpu().numpy()
-    # y_r = F.upsample_bilinear(y_r, scale_factor=2).data[0][0].cpu().numpy()
-    y_r1 = cv2.resize(y_r[1], (640, 480))
-    y_r2 = cv2.resize(y_r[2], (640, 480))
-    return y_r1, y_r2
-    yy = dense_crf(np.array(full_img).astype(np.uint8), y)
+        binary_seg_images = F.softmax(prob2).data.cpu().numpy()[:, 1, :, :]
+        # instance don't use softmax
+        instance_seg_images = prob1.data.cpu().numpy()[:, 1, :, :]
+        res = -instance_seg_images[0] * (binary_seg_images[0]>0.2)
+        res = res / np.max(res) * 255
+        new_img = postprocessor.nms(binary_seg_images[0])
+        resb = -instance_seg_images[0] * (new_img>0.2)
+        resb = resb / np.max(resb) * 255
 
-   # return yy > 0.5
-    return yy
+        cv2.imwrite('mid_result/lane_instance_seg/val/' + 'a_{}.jpg'.format(i), res)
+        cv2.imwrite('mid_result/lane_instance_seg/val/' + 'b_{}.jpg'.format(i), resb)
+        # for index, binary_seg_image in enumerate(binary_seg_images):
+        #     t0 = time.time()
+        #     new_img = postprocessor.nms(binary_seg_image)
+        #     t1 = time.time()
+        #     binary_image = postprocessor.postprocess(binary_seg_image)
+        #     t2 = time.time()
+        #     mask_image = cluster.get_lane_mask(binary_seg_ret=binary_image,
+        #                                        instance_seg_ret=instance_seg_images[index])
+        #     t3 = time.time()
+        #     new_mask_image = cluster.get_lane_mask(binary_seg_ret=new_img,
+        #                                        instance_seg_ret=instance_seg_images[index])
+        #     t4 = time.time()
+        #     print('nms:{} , postprocess:{} , mask: {} , nms_mask: {}'.format(
+        #         t1-t0, t2-t1, t3-t2, t4-t3
+        #     ))
+        #     # print('cluster time: {}'.format(time.time() - t_start))
+        #     fig = plt.figure(figsize=(16, 16))
+        #     ax1 = fig.add_subplot(131)
+        #     ax1.imshow(img[0].numpy().transpose(1, 2, 0).astype(int) + (104, 117, 123))
+        #     ax2 = fig.add_subplot(132)
+        #     ax2.imshow(new_mask_image * np.tile((new_img > 0.2)[:, :, np.newaxis], 3))
+        #     ax3 = fig.add_subplot(133)
+        #     ax3.imshow(mask_image * np.tile((binary_image > 0.2)[:, :, np.newaxis], 3))
+        #     fig.tight_layout()
+        #     plt.savefig('mid_result/lane_instance_seg/val/' + '{}.jpg'.format(i))
+        #     plt.close()
+        if i % 10 == 0:
+            print(i)
+        # if i % 10 == 0:
+        #     data_processor.draw_fs(X, y1, y2, F.softmax(prob1), F.softmax(prob2), i,
+        #                            'mid_result/{}/val/{}/'.format(args[0], t1))
+
+    return tot / num_images
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--model', '-m', default='once_conv/CP36001.pth',
-                        metavar='FILE',
-                        help="Specify the file in which is stored the model"
-                             " (default : 'MODEL.pth')");
-    parser.add_argument('--input', '-i', metavar='INPUT', nargs='+',
-                        help='filenames of input images')
-    parser.add_argument('--output', '-o', metavar='INPUT', nargs='+',
-                        help='filenames of ouput images')
-    parser.add_argument('--cpu', '-c', action='store_true',
-                        help="Do not use the cuda version of the net",
-                        default=False)
-    parser.add_argument('--viz', '-v', action='store_true',
-                        help="Visualize the images as they are processed",
-                        default=False)
-    parser.add_argument('--no-save', '-n', action='store_false',
-                        help="Do not save the output masks",
-                        default=False)
+def eval_net(net, dataset, gpu=False):
+    tot = 0
+    for i, b in enumerate(dataset):
+        X = b[0]
+        y = b[1]
 
-    args = parser.parse_args()
-    print("Using model file : {}".format(args.model))
-    net = UNet(3, 3)
-    if not args.cpu:
-        print("Using CUDA version of the net, prepare your GPU !")
-        net.cuda()
-    else:
-        net.cpu()
-        print("Using CPU version of the net, this may be very slow")
+        X = torch.FloatTensor(X).unsqueeze(0)
+        y = torch.LongTensor(y).unsqueeze(0)
 
+        if gpu:
+            X = Variable(X, volatile=True).cuda()
+            y = Variable(y, volatile=True).cuda()
+        else:
+            X = Variable(X, volatile=True)
+            y = Variable(y, volatile=True)
 
-    #in_files = args.input
-    in_files = open('data/test.txt').readlines()
-    out_files = []
-    save_path = 'scnn_out'
-    if not args.output:
-        for f in in_files:
-            pathsplit = os.path.splitext(f)
-            out_files.append("{}_OUT{}".format(pathsplit[0], pathsplit[1]))
-    elif len(in_files) != len(args.output):
-        print("Error : Input files and output files are not of the same length")
-        raise SystemExit()
-    else:
-        out_files = args.output
+        y_pred = net(X)
 
-    print("Loading model ...")
-    net.load_state_dict(torch.load(args.model))
-    print("Model loaded !")
+       # y_pred = (F.sigmoid(y_pred) > 0.6).float()
+        y_pred = F.log_softmax(y_pred)
+        loss = nn.NLLLoss2d(Variable(torch.FloatTensor([0.4,1, 1])).cuda())(y_pred, y)
+        #loss = nn.CrossEntropyLoss(Variable(torch.FloatTensor([0.4,1, 1])).cuda())(y_pred, y)
+        tot += loss
 
-    for i, fn in enumerate(in_files):
-        print("\nPredicting image {} ...".format(fn))
-        img = Image.open(fn[:-1])
-
-        out, out2 = predict_img(net, img, not args.cpu)
-        if args.viz:
-            print("Vizualising results for image {}, close to continue ..."
-                  .format(fn))
+        if 0:
+            X = X.data.squeeze(0).cpu().numpy()
+            X = np.transpose(X, axes=[1, 2, 0])
+            y = y.data.squeeze(0).cpu().numpy()
+            y_pred = y_pred.data.squeeze(0).squeeze(0).cpu().numpy()
+            print(y_pred.shape)
 
             fig = plt.figure()
-            a = fig.add_subplot(1, 2, 1)
-            a.set_title('Input image')
-            plt.imshow(img)
+            ax1 = fig.add_subplot(1, 4, 1)
+            ax1.imshow(X)
+            ax2 = fig.add_subplot(1, 4, 2)
+            ax2.imshow(y)
+            ax3 = fig.add_subplot(1, 4, 3)
+            ax3.imshow((y_pred > 0.5))
 
-            b = fig.add_subplot(1, 2, 2)
-            b.set_title('Output mask')
-            plt.imshow(out)
-
+            Q = dense_crf(((X * 255).round()).astype(np.uint8), y_pred)
+            ax4 = fig.add_subplot(1, 4, 4)
+            print(Q)
+            ax4.imshow(Q > 0.5)
             plt.show()
+    return tot / i
 
-        if not args.no_save:
-            result1 = Image.fromarray((out * 100).astype(numpy.uint8))
-            result2 = Image.fromarray((out2 * 100).astype(numpy.uint8))
-            if not os.path.exists(os.path.dirname(os.path.join(save_path,out_files[i][:-1]))):
-                os.makedirs(os.path.dirname(os.path.join(save_path,out_files[i][:-1])))
-            result1.save(os.path.join(save_path,out_files[i][:-1]))
-            result2.save(os.path.join(save_path,out_files[i][:-1]))
-            print("Mask saved to {}".format(out_files[i]))
+if __name__ == '__main__':
+    parser = OptionParser()
+    parser.add_option('-g', '--gpu', action='store_true', dest='gpu',
+                      default=True, help='use cuda')
+    parser.add_option('-c', '--load', dest='load',
+                      default=False, help='load file model')
+    parser.add_option('-n', '--model_name', dest='model_name',
+                      default='deeplab', type=str, help='model_name')
+    parser.add_option('-i', '--gpu_id', dest='gpu_id',
+                      default='4', help='gpu_id')
+    (options, args) = parser.parse_args()
+    # resnet18 = deeplab_vgg16.vgg16_bn(pretrained=True)
+
+    os.environ['CUDA_VISIBLE_DEVICES'] = options.gpu_id
+
+    dataset_dir = '/data0/hwkuang/data/wandao_jpg/'
+    val_dataset_file = ops.join(dataset_dir, 'test.txt')
+    val_dataset = Dataset(val_dataset_file, dataset_dir, transform=SSDAugmentation())
+    val_dataloader = data.DataLoader(val_dataset, 1, num_workers=1,
+                                     shuffle=False, collate_fn=detection_collate, pin_memory=True)
+
+    #net = UNet(3, 3)
+    net = deeplab_vgg16.vgg16_freespace_gn()
+    print(net)
+
+    net.load_state_dict(torch.load(options.load))
+    print('Model loaded from {}'.format(options.load))
+    net.eval()
+
+    if options.gpu:
+        net.cuda()
+        cudnn.benchmark = True
+
+
+    loss = my_eval_net(net, val_dataloader, options.gpu, options.model_name)
+    print(loss)

@@ -5,23 +5,26 @@ import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
 import torch.nn as nn
+import torch.backends.cudnn as cudnn
+import cv2
 import time
 VGG_MEAN = [123.68, 116.779, 103.939]
-from utils.pil_aug import SSDAugmentation
 
 import os
 from optparse import OptionParser
 
-import torch.backends.cudnn as cudnn
 import os.path as ops
 from utils import *
-from utils import data_processor
+from utils import data_processor, lane_postprocess, lane_cluster
+from utils.pil_aug import SSDAugmentation
 from deeplab import deeplab_vgg16
 from dataset.nm_data import Dataset, detection_collate
 import torch.utils.data as data
 from Instance_loss import Instance_loss
 
 discriminative_loss = Instance_loss()
+postprocessor = lane_postprocess.LaneNetPoseProcessor()
+cluster = lane_cluster.LaneNetCluster()
 
 
 def my_eval_net(net, dataset, gpu=False, *args):
@@ -40,8 +43,10 @@ def my_eval_net(net, dataset, gpu=False, *args):
         X = Variable(img).cuda()
         y1 = Variable(lane).cuda()
         y2 = Variable(y2).cuda()
-
+        t_s = time.time()
         y_pred = net(X)
+        t_e = time.time()
+        print('infer time: {}'.format(t_e-t_s))
         yp1 = y_pred[:, :2, :, :]
         yp2 = y_pred[:, 2:, :, :]
         prob1 = F.log_softmax(yp1)
@@ -50,9 +55,43 @@ def my_eval_net(net, dataset, gpu=False, *args):
         loss2 = nn.NLLLoss2d(Variable(torch.FloatTensor([0.4, 1])).cuda())(prob2, y2)
         loss = loss1 + loss2
 
-        if i % 100 == 0:
-            data_processor.draw_fs(X, y1, y2, F.softmax(prob1), F.softmax(prob2), i,
-                                   'mid_result/{}/val/{}/'.format(args[0], t1))
+        binary_seg_images = F.softmax(prob2).data.cpu().numpy()[:, 1, :, :]
+        # instance don't use softmax
+        instance_seg_images = prob1.data.cpu().numpy()[:, 1, :, :]
+        res = -instance_seg_images[0] * (binary_seg_images[0]>0.2)
+        res = res / np.max(res) * 255
+        cv2.imwrite('mid_result/lane_instance_seg/val/' + 'a_{}.jpg'.format(i), res)
+        # for index, binary_seg_image in enumerate(binary_seg_images):
+        #     t0 = time.time()
+        #     new_img = postprocessor.nms(binary_seg_image)
+        #     t1 = time.time()
+        #     binary_image = postprocessor.postprocess(binary_seg_image)
+        #     t2 = time.time()
+        #     mask_image = cluster.get_lane_mask(binary_seg_ret=binary_image,
+        #                                        instance_seg_ret=instance_seg_images[index])
+        #     t3 = time.time()
+        #     new_mask_image = cluster.get_lane_mask(binary_seg_ret=new_img,
+        #                                        instance_seg_ret=instance_seg_images[index])
+        #     t4 = time.time()
+        #     print('nms:{} , postprocess:{} , mask: {} , nms_mask: {}'.format(
+        #         t1-t0, t2-t1, t3-t2, t4-t3
+        #     ))
+        #     # print('cluster time: {}'.format(time.time() - t_start))
+        #     fig = plt.figure(figsize=(16, 16))
+        #     ax1 = fig.add_subplot(131)
+        #     ax1.imshow(img[0].numpy().transpose(1, 2, 0).astype(int) + (104, 117, 123))
+        #     ax2 = fig.add_subplot(132)
+        #     ax2.imshow(new_mask_image * np.tile((new_img > 0.2)[:, :, np.newaxis], 3))
+        #     ax3 = fig.add_subplot(133)
+        #     ax3.imshow(mask_image * np.tile((binary_image > 0.2)[:, :, np.newaxis], 3))
+        #     fig.tight_layout()
+        #     plt.savefig('mid_result/lane_instance_seg/val/' + '{}.jpg'.format(i))
+        #     plt.close()
+        if i % 10 == 0:
+            print(i)
+        # if i % 10 == 0:
+        #     data_processor.draw_fs(X, y1, y2, F.softmax(prob1), F.softmax(prob2), i,
+        #                            'mid_result/{}/val/{}/'.format(args[0], t1))
 
         tot += loss[0].data
 
@@ -114,7 +153,7 @@ if __name__ == '__main__':
     parser.add_option('-n', '--model_name', dest='model_name',
                       default='deeplab', type=str, help='model_name')
     parser.add_option('-i', '--gpu_id', dest='gpu_id',
-                      default='0', help='gpu_id')
+                      default='4', help='gpu_id')
     (options, args) = parser.parse_args()
     # resnet18 = deeplab_vgg16.vgg16_bn(pretrained=True)
 
@@ -131,8 +170,8 @@ if __name__ == '__main__':
     if options.gpu:
         net.cuda()
         cudnn.benchmark = True
-    dataset_dir = '/home/workspace/hwkuang/data/Nullmax_data/'
-    val_dataset_file = ops.join(dataset_dir, 'val_undistortion.txt')
+    dataset_dir = '/data0/hwkuang/data/Nullmax_data/'
+    val_dataset_file = ops.join(dataset_dir, 'val_instance.txt')
     val_dataset = Dataset(val_dataset_file, dataset_dir, transform=SSDAugmentation())
     val_dataloader = data.DataLoader(val_dataset, 1, num_workers=1,
                                      shuffle=False, collate_fn=detection_collate, pin_memory=True)

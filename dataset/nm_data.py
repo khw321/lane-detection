@@ -56,9 +56,14 @@ class Dataset(data.Dataset):
         with open(dataset_info_file, 'r') as file:
             for _info in file:
                 info_tmp = _info.strip(' ').split()
-                gt_img_list.append(dataset_dir + info_tmp[0])
-                gt_lane_list.append(dataset_dir + info_tmp[1])
-                gt_freespace_list.append(dataset_dir + info_tmp[2])
+                if len(info_tmp) == 1:
+                    gt_img_list.append(dataset_dir + info_tmp[0])
+                    gt_lane_list.append(dataset_dir + info_tmp[0])
+                    gt_freespace_list.append(dataset_dir + info_tmp[0])
+                else:
+                    gt_img_list.append(dataset_dir + info_tmp[0])
+                    gt_lane_list.append(dataset_dir + info_tmp[1])
+                    gt_freespace_list.append(dataset_dir + info_tmp[2])
 
         return gt_img_list, gt_lane_list, gt_freespace_list
 
